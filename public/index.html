@@ -19,7 +19,6 @@
     <script defer src="/__/firebase/11.10.0/firebase-app-compat.js"></script>
     <script defer src="/__/firebase/11.10.0/firebase-auth-compat.js"></script>
     <script defer src="/__/firebase/11.10.0/firebase-database-compat.js"></script>
-    <script defer src="/__/firebase/11.10.0/firebase-firestore-compat.js"></script>
     <script defer src="/__/firebase/11.10.0/firebase-functions-compat.js"></script>
     <script defer src="/__/firebase/11.10.0/firebase-messaging-compat.js"></script>
     <script defer src="/__/firebase/11.10.0/firebase-storage-compat.js"></script>
@@ -276,178 +275,78 @@
             }
         };
 
-        // Fungsi helper untuk mengelola cache di Firebase Firestore
-        const CACHE_COLLECTION = 'argentaCache';
-        const CACHE_DOCUMENT_ID = 'mainContent';
+        // Fungsi helper untuk mengelola data di Firebase Realtime Database
+        const DATA_PATH = 'argenta/index';
 
-        async function setCacheToFirebase(data) {
+        async function loadDataFromFirebase() {
             try {
-                if (typeof firebase === 'undefined' || !firebase.firestore) {
-                    console.log('Firebase Firestore tidak tersedia, menggunakan cache cookies');
-                    setCookie('argentaData', data, 1);
-                    setCookie('argentaDataTimestamp', Date.now(), 1);
-                    return;
+                if (typeof firebase === 'undefined' || !firebase.database) {
+                    console.log('Firebase Realtime Database tidak tersedia');
+                    return null;
                 }
 
-                const db = firebase.firestore();
-                const cacheRef = db.collection(CACHE_COLLECTION).doc(CACHE_DOCUMENT_ID);
+                const db = firebase.database();
+                const dataRef = db.ref(DATA_PATH);
+                const snapshot = await dataRef.once('value');
 
-                await cacheRef.set({
-                    data: data,
-                    timestamp: Date.now(),
-                    expiry: Date.now() + (60 * 60 * 1000), // 1 jam dari sekarang
-                    lastUpdated: firebase.firestore.FieldValue.serverTimestamp()
-                });
-
-                console.log('Data berhasil disimpan ke Firebase cache');
-            } catch (error) {
-                console.error('Error menyimpan ke Firebase cache:', error);
-                // Fallback ke cookies jika Firebase gagal
-                setCookie('argentaData', data, 1);
-                setCookie('argentaDataTimestamp', Date.now(), 1);
-            }
-        }
-
-        async function getCacheFromFirebase() {
-            try {
-                if (typeof firebase === 'undefined' || !firebase.firestore) {
-                    console.log('Firebase Firestore tidak tersedia, menggunakan cache cookies');
-                    return {
-                        data: getCookie('argentaData'),
-                        timestamp: getCookie('argentaDataTimestamp'),
-                        isValid: false
-                    };
-                }
-
-                const db = firebase.firestore();
-                const cacheRef = db.collection(CACHE_COLLECTION).doc(CACHE_DOCUMENT_ID);
-                const doc = await cacheRef.get();
-
-                if (doc.exists) {
-                    const cacheData = doc.data();
-                    const now = Date.now();
-                    const isValid = now < cacheData.expiry;
-
-                    console.log(`Firebase cache ditemukan, valid: ${isValid}`);
-                    return {
-                        data: cacheData.data,
-                        timestamp: cacheData.timestamp,
-                        isValid: isValid
-                    };
+                if (snapshot.exists()) {
+                    const data = snapshot.val();
+                    console.log('Data berhasil dimuat dari Firebase Realtime Database:', data);
+                    return data;
                 } else {
-                    console.log('Tidak ada cache di Firebase');
-                    return { data: null, timestamp: null, isValid: false };
+                    console.log('Tidak ada data di path:', DATA_PATH);
+                    return null;
                 }
             } catch (error) {
-                console.error('Error mengambil dari Firebase cache:', error);
-                // Fallback ke cookies jika Firebase gagal
-                const cachedData = getCookie('argentaData');
-                const cacheTimestamp = getCookie('argentaDataTimestamp');
-                const isValid = cachedData && cacheTimestamp && (Date.now() - cacheTimestamp < 3600000);
-
-                return {
-                    data: cachedData,
-                    timestamp: cacheTimestamp,
-                    isValid: isValid
-                };
+                console.error('Error mengambil data dari Firebase Realtime Database:', error);
+                return null;
             }
         }
 
-        async function clearCacheFromFirebase() {
-            try {
-                if (typeof firebase === 'undefined' || !firebase.firestore) {
-                    console.log('Firebase Firestore tidak tersedia, menghapus cache cookies');
-                    deleteCookie('argentaData');
-                    deleteCookie('argentaDataTimestamp');
-                    return;
-                }
-
-                const db = firebase.firestore();
-                const cacheRef = db.collection(CACHE_COLLECTION).doc(CACHE_DOCUMENT_ID);
-                await cacheRef.delete();
-
-                console.log('Firebase cache berhasil dihapus');
-            } catch (error) {
-                console.error('Error menghapus Firebase cache:', error);
-                // Fallback hapus cookies
-                deleteCookie('argentaData');
-                deleteCookie('argentaDataTimestamp');
-            }
-        }
-
-        // Fungsi helper untuk mengelola cookies (sebagai fallback)
-        function setCookie(name, value, hours) {
-            const date = new Date();
-            date.setTime(date.getTime() + (hours * 60 * 60 * 1000));
-            const expires = "expires=" + date.toUTCString();
-            document.cookie = name + "=" + JSON.stringify(value) + ";" + expires + ";path=/";
-        }
-
-        function getCookie(name) {
-            const nameEQ = name + "=";
-            const ca = document.cookie.split(';');
-            for (let i = 0; i < ca.length; i++) {
-                let c = ca[i];
-                while (c.charAt(0) == ' ') c = c.substring(1, c.length);
-                if (c.indexOf(nameEQ) == 0) {
-                    try {
-                        return JSON.parse(c.substring(nameEQ.length, c.length));
-                    } catch (e) {
-                        return null;
-                    }
-                }
-            }
-            return null;
-        }
-
-        function deleteCookie(name) {
-            document.cookie = name + "=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
-        }
-
-        // Fungsi untuk load data dari API eksternal dengan Firebase caching
+        // Fungsi untuk load data dari Firebase Realtime Database dengan fallback ke API eksternal
         async function loadKontenJSON() {
             try {
-                // Cek apakah data sudah ada di Firebase cache
-                const cacheResult = await getCacheFromFirebase();
+                // Prioritas 1: Coba load langsung dari Firebase Realtime Database (argenta/index)
+                console.log('Mengambil data dari Firebase Realtime Database path: argenta/index');
+                const firebaseData = await loadDataFromFirebase();
 
-                // Jika data ada di cache dan masih valid
-                if (cacheResult.data && cacheResult.isValid) {
-                    console.log('Menggunakan data dari Firebase cache');
+                if (firebaseData) {
+                    // Assign data dengan fallback ke default jika tidak ada atau null
+                    kontenHero = firebaseData.kontenHero || defaultHeroData;
+                    kontenLayanan = firebaseData.kontenLayanan || defaultData.kontenLayanan;
 
-                    // Assign data dari cache
-                    const cachedData = cacheResult.data;
-                    kontenHero = cachedData.kontenHero || defaultHeroData;
-                    kontenLayanan = cachedData.kontenLayanan || defaultData.kontenLayanan;
-
-                    if (cachedData.kontenKomisarisDirektur &&
-                        (cachedData.kontenKomisarisDirektur.komisaris || cachedData.kontenKomisarisDirektur.direktur)) {
+                    // Handle null values untuk komisaris dan direktur
+                    if (firebaseData.kontenKomisarisDirektur &&
+                        (firebaseData.kontenKomisarisDirektur.komisaris || firebaseData.kontenKomisarisDirektur.direktur)) {
                         kontenKomisarisDirektur = {
-                            komisaris: cachedData.kontenKomisarisDirektur.komisaris || null,
-                            direktur: cachedData.kontenKomisarisDirektur.direktur || null
+                            komisaris: firebaseData.kontenKomisarisDirektur.komisaris || null,
+                            direktur: firebaseData.kontenKomisarisDirektur.direktur || null
                         };
                     } else {
                         kontenKomisarisDirektur = defaultData.kontenKomisarisDirektur;
                     }
 
-                    kontenVisiMisi = cachedData.kontenVisiMisi || defaultData.kontenVisiMisi;
-                    kontenKoneksiWilayah = cachedData.kontenKoneksiWilayah || defaultData.kontenKoneksiWilayah;
+                    kontenVisiMisi = firebaseData.kontenVisiMisi || defaultData.kontenVisiMisi;
+                    kontenKoneksiWilayah = firebaseData.kontenKoneksiWilayah || defaultData.kontenKoneksiWilayah;
 
-                    if (cachedData.kontenPerusahaanDipercaya) {
+                    // Handle null values untuk logo perusahaan
+                    if (firebaseData.kontenPerusahaanDipercaya) {
                         kontenPerusahaanDipercaya = {
-                            judul: cachedData.kontenPerusahaanDipercaya.judul || defaultData.kontenPerusahaanDipercaya.judul,
-                            logo: cachedData.kontenPerusahaanDipercaya.logo || null
+                            judul: firebaseData.kontenPerusahaanDipercaya.judul || defaultData.kontenPerusahaanDipercaya.judul,
+                            logo: firebaseData.kontenPerusahaanDipercaya.logo || null
                         };
                     } else {
                         kontenPerusahaanDipercaya = defaultData.kontenPerusahaanDipercaya;
                     }
 
-                    kontenTentangKami = cachedData.kontenTentangKami || defaultData.kontenTentangKami;
+                    kontenTentangKami = firebaseData.kontenTentangKami || defaultData.kontenTentangKami;
 
-                    return; // Keluar dari fungsi karena menggunakan cache
+                    console.log('Data berhasil dimuat dari Firebase Realtime Database');
+                    return; // Keluar dari fungsi karena sudah berhasil
                 }
 
-                // Jika tidak ada cache atau sudah expired, hit ke server
-                console.log('Mengambil data dari server API');
+                // Prioritas 2: Jika tidak ada data di Firebase, hit ke server API eksternal sebagai fallback
+                console.log('Data tidak ditemukan di Firebase, mengambil dari server API eksternal sebagai fallback');
                 const res = await fetch('https://allhub.progesio.my.id/api/hub/argenta/index');
                 if (!res.ok) throw new Error('Gagal memuat data dari API');
 
@@ -490,18 +389,12 @@
 
                 kontenTentangKami = data.kontenTentangKami || defaultData.kontenTentangKami;
 
-                // Simpan data ke Firebase cache
-                await setCacheToFirebase(data);
-
-                console.log('Data berhasil dimuat dari API dan disimpan ke Firebase cache:', data);
+                console.log('Data berhasil dimuat dari API eksternal sebagai fallback:', data);
 
             } catch (e) {
-                console.error('Error loading API data:', e);
+                console.error('Error loading data:', e);
 
-                // Hapus cache jika ada error
-                await clearCacheFromFirebase();
-
-                // Fallback ke data default jika API gagal
+                // Fallback ke data default jika semua gagal
                 kontenLayanan = defaultData.kontenLayanan;
                 kontenKomisarisDirektur = defaultData.kontenKomisarisDirektur;
                 kontenVisiMisi = defaultData.kontenVisiMisi;
@@ -509,45 +402,46 @@
                 kontenPerusahaanDipercaya = defaultData.kontenPerusahaanDipercaya;
                 kontenTentangKami = defaultData.kontenTentangKami;
 
-                alert('Gagal memuat konten dari server, menggunakan konten default!');
+                alert('Gagal memuat konten dari Firebase dan server, menggunakan konten default!');
             }
         }
 
-        // Fungsi untuk menghapus cache manual (bisa dipanggil dari console untuk testing)
-        async function clearCache() {
-            await clearCacheFromFirebase();
-            console.log('Cache data Argenta berhasil dihapus dari Firebase');
-        }
-
-        // Fungsi untuk cek status cache (bisa dipanggil dari console untuk testing)
-        async function checkCache() {
+        // Fungsi untuk mengecek data di Firebase Realtime Database (untuk testing)
+        async function checkRealtimeDBData() {
             try {
-                const cacheResult = await getCacheFromFirebase();
+                if (typeof firebase === 'undefined' || !firebase.database) {
+                    console.log('Firebase Realtime Database tidak tersedia');
+                    return { hasData: false, error: 'Database tidak tersedia' };
+                }
 
-                if (cacheResult.data && cacheResult.isValid) {
-                    const timeLeft = cacheResult.data.expiry ? cacheResult.data.expiry - Date.now() : 0;
-                    const minutesLeft = Math.floor(timeLeft / 60000);
-                    console.log(`Firebase cache tersedia, sisa waktu: ${minutesLeft} menit`);
+                const db = firebase.database();
+                const dataRef = db.ref(DATA_PATH);
+                const snapshot = await dataRef.once('value');
+
+                if (snapshot.exists()) {
+                    const data = snapshot.val();
+                    console.log('Data tersedia di Firebase Realtime Database path:', DATA_PATH);
                     return {
-                        hasCache: true,
-                        minutesLeft: minutesLeft,
-                        data: cacheResult.data,
-                        source: 'firebase'
+                        hasData: true,
+                        data: data,
+                        source: 'firebase-rtdb',
+                        path: DATA_PATH
                     };
                 } else {
-                    console.log('Tidak ada cache tersedia di Firebase');
-                    return { hasCache: false, source: 'firebase' };
+                    console.log('Tidak ada data di Firebase Realtime Database path:', DATA_PATH);
+                    return { hasData: false, source: 'firebase-rtdb', path: DATA_PATH };
                 }
             } catch (error) {
-                console.error('Error checking Firebase cache:', error);
-                return { hasCache: false, error: error.message };
+                console.error('Error checking Firebase Realtime Database data:', error);
+                return { hasData: false, error: error.message };
             }
-        }        // Fungsi untuk force refresh data (bypass cache)
+        }
+
+        // Fungsi untuk force refresh data (load ulang dari Firebase atau API)
         async function forceRefreshData() {
-            console.log('Force refresh: menghapus cache dan mengambil data fresh dari API');
-            await clearCacheFromFirebase();
+            console.log('Force refresh: mengambil data fresh dari Firebase atau API eksternal');
             await loadKontenJSON();
-            
+
             // Re-render semua komponen
             renderHero();
             renderVisiMisi();
@@ -556,13 +450,13 @@
             renderLayanan();
             renderPerusahaanDipercaya();
             renderTentangKami();
-            
+
             // Reinitialize carousels
             setTimeout(function () {
                 $('.layanan-carousel').trigger('destroy.owl.carousel').removeClass('owl-carousel owl-loaded');
                 $('.hero-carousel').trigger('destroy.owl.carousel').removeClass('owl-carousel owl-loaded');
                 $('.owl-carousel.owl-theme').trigger('destroy.owl.carousel').removeClass('owl-carousel owl-loaded');
-                
+
                 $('.layanan-carousel').addClass('owl-carousel').owlCarousel({
                     loop: true,
                     margin: 24,
@@ -597,9 +491,22 @@
                     }
                 });
             }, 500);
-            
+
             console.log('Force refresh selesai');
         }
+
+        // ======= FUNGSI DEBUGGING UNTUK CONSOLE =======
+        // Tersedia fungsi-fungsi berikut untuk debugging dari browser console:
+        // 
+        // 1. checkRealtimeDBData() - Cek data di Firebase Realtime Database (argenta/index)
+        // 2. forceRefreshData() - Force refresh: load ulang data dari Firebase atau API
+        // 3. loadDataFromFirebase() - Load data langsung dari Firebase path argenta/index  
+        // 4. getImageCacheInfo() - Info cache gambar dari Service Worker
+        // 5. clearImageCache() - Hapus cache gambar dari Service Worker
+        //
+        // Contoh penggunaan: 
+        // checkRealtimeDBData().then(result => console.log(result))
+        // forceRefreshData().then(() => location.reload())
 
         // Fungsi untuk mengelola image cache (Service Worker)
         async function clearImageCache() {
@@ -614,7 +521,7 @@
                             reject(new Error('Gagal menghapus image cache'));
                         }
                     };
-                    
+
                     navigator.serviceWorker.controller.postMessage(
                         { type: 'CLEAR_IMAGE_CACHE' },
                         [messageChannel.port2]
@@ -633,7 +540,7 @@
                         console.log('Image cache info:', event.data);
                         resolve(event.data);
                     };
-                    
+
                     navigator.serviceWorker.controller.postMessage(
                         { type: 'GET_CACHE_INFO' },
                         [messageChannel.port2]
@@ -946,7 +853,6 @@
                         let features = [
                             'auth',
                             'database',
-                            'firestore',
                             'functions',
                             'messaging',
                             'storage',
